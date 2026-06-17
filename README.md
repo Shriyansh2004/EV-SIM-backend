@@ -618,7 +618,7 @@ Ensure CORS allows the frontend origin (currently `*` for development).
 
 Design patterns are inspired by:
 
-- **[ocpp-virtual-charge-point]([https://github.com/mobilityhouse/ocpp](https://github.com/solidstudiosh/ocpp-virtual-charge-point))** — Virtual charger OCPP message patterns
+- **[ocpp-virtual-charge-point](https://github.com/solidstudiosh/ocpp-virtual-charge-point)** — Virtual charger OCPP message patterns
 - **[citrineos-core](https://github.com/citrineos/citrineos-core)** — CSMS handler reference (BootNotification, TransactionEvent)
 
 ---
