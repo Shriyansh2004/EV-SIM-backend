@@ -20,11 +20,19 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+  from app.db.database import close_db, init_db
+  from app.csms.session_manager import session_manager
+  from app.virtual_charger.charger_pool import charger_pool
+
+  await init_db()
+  await charger_pool.load_from_db()
+  await session_manager.load_from_db()
   setup_broadcast_listeners()
   await simulator.start()
   logger.info("EV-SIM started")
   yield
   await simulator.stop()
+  await close_db()
 
 
 app = FastAPI(

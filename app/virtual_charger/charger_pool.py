@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from app.models.schemas import ChargerConfig, VirtualCharger
+from app.db.repository import charger_repository
+from app.models.schemas import ChargerConfig, ChargerStatus, VirtualCharger
 from app.virtual_charger.charger import VirtualChargerClient
 
 
@@ -22,9 +23,32 @@ class ChargerPool:
     for listener in self._listeners:
       listener(event_type, data)
 
-  def create(self, config: ChargerConfig) -> VirtualCharger:
+  async def load_from_db(self) -> None:
+    records = await charger_repository.list_all()
+    for record in records:
+      if record.id in self._chargers:
+        continue
+      config = ChargerConfig(
+        id=record.id,
+        max_power_kw=record.max_power_kw,
+        connector_count=record.connector_count,
+      )
+      client = VirtualChargerClient(
+        config,
+        on_update=lambda et, d: self._broadcast(et, d),
+      )
+      client.status = ChargerStatus(record.status)
+      if record.connector_statuses:
+        client._connector_statuses = [
+          ChargerStatus(s) for s in record.connector_statuses
+        ]
+      self._chargers[record.id] = client
+
+  async def create(self, config: ChargerConfig) -> VirtualCharger:
     if config.id in self._chargers:
       raise ValueError(f"Charger {config.id} already exists")
+
+    await charger_repository.create(config)
 
     client = VirtualChargerClient(
       config,
@@ -58,6 +82,10 @@ class ChargerPool:
     if client:
       if client._ws:
         await client.disconnect_from_csms()
+      await charger_repository.delete(charger_id)
+      from app.csms.session_manager import session_manager
+
+      session_manager.remove_sessions_for_charger(charger_id)
       return True
     return False
 

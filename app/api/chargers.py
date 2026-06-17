@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from app.csms.csms_handler import csms_registry
-from app.csms.session_manager import session_manager
 from app.models.schemas import CreateChargerRequest, VirtualCharger, ChargerConfig
 from app.virtual_charger.charger_pool import charger_pool
 
@@ -23,7 +22,7 @@ async def create_charger(body: CreateChargerRequest) -> VirtualCharger:
       max_power_kw=body.max_power_kw,
       connector_count=body.connector_count,
     )
-    return charger_pool.create(config)
+    return await charger_pool.create(config)
   except ValueError as e:
     raise HTTPException(status_code=409, detail=str(e))
 
