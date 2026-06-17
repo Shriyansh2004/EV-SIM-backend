@@ -9,8 +9,8 @@ Python backend for **EV-SIM** — an interactive platform that simulates virtual
 - [Tech Stack & Versions](#tech-stack--versions)
 - [Folder Structure](#folder-structure)
 - [Module Reference](#module-reference)
-- [Architecture Overview](#architecture-overview)
-- [Full Workflow](#full-workflow)
+- [Architecture Overview](#architecture-overview) — system diagram with layer breakdown
+- [Full Workflow](#full-workflow) — step-by-step flows (use navigation buttons to move between steps)
 - [API Reference](#api-reference)
 - [WebSocket Events](#websocket-events)
 - [OCPP Message Flow](#ocpp-message-flow)
@@ -191,35 +191,55 @@ Ring buffer (max 500 messages) of `OcppMessage` records. Both CP and CSMS sides 
 
 ## Architecture Overview
 
+<p align="center">
+  <a href="#full-workflow"><img alt="Workflow" src="https://img.shields.io/badge/View-Full_Workflow-059669?style=for-the-badge" /></a>
+  <a href="#ocpp-message-flow"><img alt="OCPP Flow" src="https://img.shields.io/badge/View-OCPP_Flow-7c3aed?style=for-the-badge" /></a>
+</p>
+
+```mermaid
+flowchart TB
+    subgraph EXT["External · :3001"]
+        FE["Next.js Dashboard"]
+    end
+
+    subgraph BE["EV-SIM Backend · FastAPI :8000"]
+        direction TB
+
+        subgraph API["API Layer"]
+            direction LR
+            CH["chargers"]
+            SE["sessions"]
+            CO["commands"]
+            WS["ws"]
+        end
+
+        subgraph SVC["Shared Services"]
+            direction LR
+            SM["session_manager"]
+            OL["ocpp_logger"]
+            CS["command_service"]
+        end
+
+        subgraph OCPP["OCPP Core"]
+            direction LR
+            POOL["Virtual Charger Pool<br/>VirtualChargerClient"]
+            CSMS["CSMS Handler<br/>ConnectedChargePoint"]
+        end
+    end
+
+    FE <-->|"REST /api/*"| API
+    FE <-->|"WS /ws/updates"| WS
+    API --> SVC
+    SVC --> POOL
+    SVC --> CSMS
+    POOL <-->|"WebSocket OCPP 2.0.1<br/>/ocpp/{charger_id}"| CSMS
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         EV-SIM Backend (FastAPI :8000)                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌──────────────┐    REST/WS     ┌──────────────────────────────────────┐   │
-│  │  Next.js     │◄──────────────►│  API Layer                           │   │
-│  │  Dashboard   │  /api/*        │  chargers · sessions · commands · ws│   │
-│  │  (:3001)     │  /ws/updates   └──────────────┬───────────────────────┘   │
-│  └──────────────┘                               │                            │
-│                                                 ▼                            │
-│                    ┌────────────────────────────────────────────────┐       │
-│                    │              Shared Services                    │       │
-│                    │  session_manager · ocpp_logger · command_service│       │
-│                    └────────────┬───────────────────┬────────────────┘       │
-│                                 │                   │                        │
-│         ┌───────────────────────┘                   └───────────────────┐   │
-│         ▼                                                                 ▼   │
-│  ┌─────────────────────┐                              ┌─────────────────────┐ │
-│  │  Virtual Charger    │   WebSocket OCPP 2.0.1     │  CSMS Handler       │ │
-│  │  Pool               │ ─────────────────────────► │  (ConnectedCharge   │ │
-│  │  VirtualChargerClient│  ws://host:8000/ocpp/{id}  │   Point)            │ │
-│  │  · BootNotification │                              │  · BootNotification│ │
-│  │  · Heartbeat        │ ◄───────────────────────── │  · TransactionEvent │ │
-│  │  · TransactionEvent │                              │  · Remote commands │ │
-│  └─────────────────────┘                              └─────────────────────┘ │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+
+| Layer | Components | Responsibility |
+|-------|------------|----------------|
+| API | `chargers` · `sessions` · `commands` · `ws` | REST endpoints and dashboard WebSocket broadcast |
+| Shared Services | `session_manager` · `ocpp_logger` · `command_service` | Sessions, message log, outbound OCPP commands |
+| OCPP Core | Virtual Charger Pool · CSMS Handler | Simulated CP clients and server-side OCPP 2.0.1 handling |
 
 The backend is **monolithic but dual-role**: the same process hosts the CSMS WebSocket server and spawns virtual charger clients that connect back to it. This makes local development and demos simple without external infrastructure.
 
@@ -227,85 +247,213 @@ The backend is **monolithic but dual-role**: the same process hosts the CSMS Web
 
 ## Full Workflow
 
-### 1. Startup
+Use the buttons below to jump between workflow steps.
 
-```
+<p align="center">
+  <a href="#wf-1"><img alt="1 · Startup" src="https://img.shields.io/badge/1·Startup-2563eb?style=for-the-badge" /></a>
+  <a href="#wf-2"><img alt="2 · Create" src="https://img.shields.io/badge/2·Create-2563eb?style=for-the-badge" /></a>
+  <a href="#wf-3"><img alt="3 · Connect" src="https://img.shields.io/badge/3·Connect-2563eb?style=for-the-badge" /></a>
+  <a href="#wf-4"><img alt="4 · Start" src="https://img.shields.io/badge/4·Remote_Start-2563eb?style=for-the-badge" /></a>
+  <a href="#wf-5"><img alt="5 · Stop" src="https://img.shields.io/badge/5·Remote_Stop-2563eb?style=for-the-badge" /></a>
+  <a href="#wf-6"><img alt="6 · Explorer" src="https://img.shields.io/badge/6·OCPP_Explorer-2563eb?style=for-the-badge" /></a>
+  <a href="#wf-7"><img alt="7 · Fault" src="https://img.shields.io/badge/7·Fault_Injection-2563eb?style=for-the-badge" /></a>
+</p>
+
+---
+
+<h3 id="wf-1">1. Startup</h3>
+
+```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-1. FastAPI starts, CORS enabled for the frontend.
-2. `setup_broadcast_listeners()` subscribes `ws.broadcast` to `csms_registry` and `charger_pool` events.
-3. `simulator.start()` runs the background loop.
-
-### 2. Create a Virtual Charger
-
-```
-POST /api/chargers  { "id": "CP-001", "max_power_kw": 22, "connector_count": 1 }
+```mermaid
+flowchart TD
+    A["uvicorn starts FastAPI"] --> B["CORS enabled for frontend"]
+    B --> C["setup_broadcast_listeners()"]
+    C --> D["ws.broadcast ← csms_registry + charger_pool"]
+    D --> E["simulator.start() background loop"]
 ```
 
-→ `charger_pool.create()` instantiates a `VirtualChargerClient` (not yet connected).
+<p align="center">
+  <a href="#wf-2"><img alt="Next: Create Charger" src="https://img.shields.io/badge/Next:_Create_Charger-→-059669?style=for-the-badge" /></a>
+</p>
 
-### 3. Connect to CSMS
+---
 
+<h3 id="wf-2">2. Create a Virtual Charger</h3>
+
+```http
+POST /api/chargers
+{ "id": "CP-001", "max_power_kw": 22, "connector_count": 1 }
 ```
+
+```mermaid
+flowchart LR
+    API["POST /api/chargers"] --> POOL["charger_pool.create()"]
+    POOL --> CP["VirtualChargerClient<br/>(not connected yet)"]
+```
+
+<p align="center">
+  <a href="#wf-1"><img alt="Back: Startup" src="https://img.shields.io/badge/←_Startup-6b7280?style=for-the-badge" /></a>
+  <a href="#wf-3"><img alt="Next: Connect" src="https://img.shields.io/badge/Next:_Connect-→-059669?style=for-the-badge" /></a>
+</p>
+
+---
+
+<h3 id="wf-3">3. Connect to CSMS</h3>
+
+```http
 POST /api/chargers/CP-001/connect
 ```
 
-```
-VirtualChargerClient                    CSMS (ConnectedChargePoint)
-        │                                        │
-        │──── WebSocket connect /ocpp/CP-001 ───►│
-        │                                        │
-        │──── BootNotification ─────────────────►│
-        │◄─── BootNotification (Accepted) ──────│
-        │                                        │
-        │──── StatusNotification (Available) ────►│
-        │──── Heartbeat (every 30s) ────────────►│
+```mermaid
+sequenceDiagram
+    participant CP as VirtualChargerClient
+    participant CSMS as ConnectedChargePoint
+    participant WS as /ws/updates
+    participant FE as Dashboard
+
+    CP->>CSMS: WebSocket connect /ocpp/CP-001
+    CP->>CSMS: BootNotification
+    CSMS-->>CP: BootNotification (Accepted)
+    CP->>CSMS: StatusNotification (Available)
+    loop every 30s
+        CP->>CSMS: Heartbeat
+    end
+    CSMS->>WS: charger_connected, ocpp_message
+    WS-->>FE: live update
 ```
 
-Dashboard receives `charger_connected` and `ocpp_message` events via `/ws/updates`.
+<p align="center">
+  <a href="#wf-2"><img alt="Back: Create" src="https://img.shields.io/badge/←_Create-6b7280?style=for-the-badge" /></a>
+  <a href="#wf-4"><img alt="Next: Remote Start" src="https://img.shields.io/badge/Next:_Remote_Start-→-059669?style=for-the-badge" /></a>
+</p>
 
-### 4. Remote Start Session
+---
 
-```
-POST /api/sessions/start  { "charger_id": "CP-001", "connector_id": 1 }
+<h3 id="wf-4">4. Remote Start Session</h3>
+
+```http
+POST /api/sessions/start
+{ "charger_id": "CP-001", "connector_id": 1 }
 ```
 
-```
-Dashboard          command_service          CSMS                Virtual Charger
-    │                    │                    │                        │
-    │── POST /start ────►│                    │                        │
-    │                    │── RequestStartTransaction ──────────────────►│
-    │                    │◄── Accepted ────────────────────────────────│
-    │                    │                    │                        │── TransactionEvent (Started)
-    │                    │                    │◄───────────────────────│
-    │                    │                    │── session_started ──────►│ (broadcast)
-    │◄── ws: session_started ──────────────────────────────────────────│
-    │                    │                    │                        │── TransactionEvent (Updated) every 5s
+```mermaid
+sequenceDiagram
+    participant FE as Dashboard
+    participant CMD as command_service
+    participant CSMS as CSMS Handler
+    participant CP as Virtual Charger
+    participant SM as session_manager
+    participant WS as /ws/updates
+
+    FE->>CMD: POST /api/sessions/start
+    CMD->>CSMS: RequestStartTransaction
+    CSMS->>CP: RequestStartTransaction
+    CP-->>CSMS: Accepted
+    CP->>CSMS: TransactionEvent (Started)
+    CSMS->>SM: create session
+    CSMS->>WS: session_started
+    WS-->>FE: live update
+    loop every 5s
+        CP->>CSMS: TransactionEvent (Updated)
+        CSMS->>WS: session_updated, charger_update
+    end
 ```
 
 `session_manager` creates a session; meter values update energy, power, and SoC.
 
-### 5. Remote Stop Session
+<p align="center">
+  <a href="#wf-3"><img alt="Back: Connect" src="https://img.shields.io/badge/←_Connect-6b7280?style=for-the-badge" /></a>
+  <a href="#wf-5"><img alt="Next: Remote Stop" src="https://img.shields.io/badge/Next:_Remote_Stop-→-059669?style=for-the-badge" /></a>
+</p>
 
+---
+
+<h3 id="wf-5">5. Remote Stop Session</h3>
+
+```http
+POST /api/sessions/stop
+{ "charger_id": "CP-001" }
 ```
-POST /api/sessions/stop  { "charger_id": "CP-001" }
+
+```mermaid
+sequenceDiagram
+    participant FE as Dashboard
+    participant CMD as command_service
+    participant CSMS as CSMS Handler
+    participant CP as Virtual Charger
+    participant SM as session_manager
+    participant WS as /ws/updates
+
+    FE->>CMD: POST /api/sessions/stop
+    CMD->>CSMS: RequestStopTransaction
+    CSMS->>CP: RequestStopTransaction
+    CP->>CSMS: TransactionEvent (Ended)
+    CSMS->>SM: end_session()
+    CSMS->>WS: session_ended
+    WS-->>FE: session completed
 ```
 
-CSMS sends `RequestStopTransaction` → CP sends `TransactionEvent (Ended)` → `session_manager.end_session()` → `session_ended` broadcast.
+<p align="center">
+  <a href="#wf-4"><img alt="Back: Remote Start" src="https://img.shields.io/badge/←_Remote_Start-6b7280?style=for-the-badge" /></a>
+  <a href="#wf-6"><img alt="Next: OCPP Explorer" src="https://img.shields.io/badge/Next:_OCPP_Explorer-→-059669?style=for-the-badge" /></a>
+</p>
 
-### 6. OCPP Explorer
+---
+
+<h3 id="wf-6">6. OCPP Explorer</h3>
+
+```mermaid
+flowchart LR
+    subgraph REST["REST polling"]
+        GET["GET /api/ocpp/messages<br/>?charger_id=CP-001&limit=100"]
+    end
+
+    subgraph LIVE["Live push"]
+        LOG["ocpp_logger ring buffer"]
+        WS["/ws/updates"]
+        EVT["ocpp_message events<br/>CP_TO_CSMS · CSMS_TO_CP"]
+    end
+
+    LOG --> GET
+    LOG --> WS --> EVT
+```
 
 - **REST:** `GET /api/ocpp/messages?charger_id=CP-001&limit=100`
 - **Live:** `ocpp_message` events on `/ws/updates` with direction `CP_TO_CSMS` or `CSMS_TO_CP`
 
-### 7. Fault Injection
+<p align="center">
+  <a href="#wf-5"><img alt="Back: Remote Stop" src="https://img.shields.io/badge/←_Remote_Stop-6b7280?style=for-the-badge" /></a>
+  <a href="#wf-7"><img alt="Next: Fault Injection" src="https://img.shields.io/badge/Next:_Fault_Injection-→-059669?style=for-the-badge" /></a>
+</p>
 
-```
+---
+
+<h3 id="wf-7">7. Fault Injection</h3>
+
+```http
 POST /api/chargers/CP-001/fault?fault_type=connector_error
 ```
 
-Simulates connector fault (`StatusNotification: Faulted`), network drop (disconnect WebSocket), or power loss during charging.
+```mermaid
+flowchart TD
+    REQ["POST /api/chargers/{id}/fault"] --> TYPE{"fault_type"}
+
+    TYPE -->|connector_error| F1["StatusNotification: Faulted"]
+    TYPE -->|network_drop| F2["Disconnect WebSocket"]
+    TYPE -->|power_loss| F3["Abort active charging"]
+
+    F1 --> WS["charger_update broadcast"]
+    F2 --> WS
+    F3 --> WS
+```
+
+<p align="center">
+  <a href="#wf-6"><img alt="Back: OCPP Explorer" src="https://img.shields.io/badge/←_OCPP_Explorer-6b7280?style=for-the-badge" /></a>
+  <a href="#wf-1"><img alt="Back to top" src="https://img.shields.io/badge/↺_Back_to_Start-2563eb?style=for-the-badge" /></a>
+</p>
 
 ---
 
@@ -371,7 +519,34 @@ Events broadcast on `/ws/updates` as `{ "type": "<event>", "data": { ... } }`:
 
 ## OCPP Message Flow
 
-Supported OCPP 2.0.1 actions in this simulator:
+<p align="center">
+  <a href="#architecture-overview"><img alt="Architecture" src="https://img.shields.io/badge/←_Architecture-6b7280?style=for-the-badge" /></a>
+  <a href="#full-workflow"><img alt="Workflow" src="https://img.shields.io/badge/←_Full_Workflow-6b7280?style=for-the-badge" /></a>
+</p>
+
+```mermaid
+flowchart LR
+    subgraph CP["Charge Point → CSMS"]
+        direction TB
+        A1["BootNotification"]
+        A2["Heartbeat"]
+        A3["StatusNotification"]
+        A4["Authorize"]
+        A5["TransactionEvent"]
+        A6["MeterValues"]
+    end
+
+    subgraph CSMS["CSMS → Charge Point"]
+        direction TB
+        B1["RequestStartTransaction"]
+        B2["RequestStopTransaction"]
+        B3["Reset"]
+        B4["ChangeAvailability"]
+        B5["UnlockConnector"]
+    end
+
+    CP <-->|"OCPP-J · WebSocket<br/>subprotocol ocpp2.0.1"| CSMS
+```
 
 | Direction | Actions |
 |-----------|---------|
