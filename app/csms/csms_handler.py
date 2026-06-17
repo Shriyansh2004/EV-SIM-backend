@@ -174,7 +174,7 @@ class ConnectedChargePoint(cp):
     if event_type == "Started":
       evse = kwargs.get("evse", {})
       connector_id = evse.get("connector_id", 1) if isinstance(evse, dict) else 1
-      session = session_manager.create_session(
+      session = await session_manager.create_session(
         self.charger_id,
         connector_id=connector_id,
         transaction_id=transaction_id,
@@ -187,14 +187,14 @@ class ConnectedChargePoint(cp):
       if session and meter_values:
         mv = _parse_meter_values(meter_values)
         if mv:
-          updated = session_manager.add_meter_value(session.id, mv)
+          updated = await session_manager.add_meter_value(session.id, mv)
           if updated:
             self._notify("session_updated", updated.model_dump())
 
     elif event_type == "Ended":
       session = session_manager.get_active_session(self.charger_id)
       if session:
-        ended = session_manager.end_session(session.id, SessionStatus.COMPLETED)
+        ended = await session_manager.end_session(session.id, SessionStatus.COMPLETED)
         if ended:
           self._notify("session_ended", ended.model_dump())
 
@@ -210,7 +210,7 @@ class ConnectedChargePoint(cp):
     if session:
       mv = _parse_meter_values(meter_value)
       if mv:
-        updated = session_manager.add_meter_value(session.id, mv)
+        updated = await session_manager.add_meter_value(session.id, mv)
         if updated:
           self._notify("session_updated", updated.model_dump())
     response = call_result.MeterValues()

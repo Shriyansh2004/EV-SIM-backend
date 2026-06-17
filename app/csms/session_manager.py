@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
+from app.db.repository import session_repository
 from app.models.schemas import MeterValue, Session, SessionStatus
 
 
@@ -11,7 +12,11 @@ class SessionManager:
   def __init__(self) -> None:
     self._sessions: dict[str, Session] = {}
 
-  def create_session(
+  async def load_from_db(self) -> None:
+    sessions = await session_repository.list_all()
+    self._sessions = {s.id: s for s in sessions}
+
+  async def create_session(
     self,
     charger_id: str,
     connector_id: int = 1,
@@ -27,6 +32,7 @@ class SessionManager:
       soc_percent=20.0,
     )
     self._sessions[session_id] = session
+    await session_repository.create(session)
     return session
 
   def get_session(self, session_id: str) -> Optional[Session]:
@@ -45,7 +51,16 @@ class SessionManager:
       reverse=True,
     )
 
-  def add_meter_value(self, session_id: str, meter_value: MeterValue) -> Optional[Session]:
+  def remove_sessions_for_charger(self, charger_id: str) -> None:
+    to_remove = [
+      session_id
+      for session_id, session in self._sessions.items()
+      if session.charger_id == charger_id
+    ]
+    for session_id in to_remove:
+      del self._sessions[session_id]
+
+  async def add_meter_value(self, session_id: str, meter_value: MeterValue) -> Optional[Session]:
     session = self._sessions.get(session_id)
     if not session:
       return None
@@ -54,9 +69,13 @@ class SessionManager:
     session.current_power_kw = meter_value.power_kw
     if meter_value.soc_percent is not None:
       session.soc_percent = meter_value.soc_percent
+
+    updated = await session_repository.add_meter_value(session_id, meter_value)
+    if updated:
+      self._sessions[session_id] = updated
     return session
 
-  def end_session(
+  async def end_session(
     self,
     session_id: str,
     status: SessionStatus = SessionStatus.COMPLETED,
@@ -64,9 +83,14 @@ class SessionManager:
     session = self._sessions.get(session_id)
     if not session:
       return None
+    end_time = datetime.utcnow().isoformat() + "Z"
     session.status = status
-    session.end_time = datetime.utcnow().isoformat() + "Z"
+    session.end_time = end_time
     session.current_power_kw = 0.0
+
+    updated = await session_repository.end_session(session_id, status, end_time)
+    if updated:
+      self._sessions[session_id] = updated
     return session
 
 
