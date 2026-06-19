@@ -55,6 +55,7 @@ class MeterValue(BaseModel):
 class Session(BaseModel):
     id: str
     charger_id: str
+    ev_id: Optional[str] = None
     connector_id: int = 1
     start_time: str
     end_time: Optional[str] = None
@@ -74,6 +75,7 @@ class VirtualCharger(BaseModel):
     current_session: Optional[Session] = None
     last_heartbeat: Optional[str] = None
     connector_statuses: list[ChargerStatus] = Field(default_factory=list)
+    plugged_evs: dict[str, Optional[str]] = Field(default_factory=dict)
 
 
 class OcppMessage(BaseModel):
@@ -123,3 +125,69 @@ class UnlockRequest(BaseModel):
 class WsEvent(BaseModel):
     type: str
     data: dict[str, Any]
+
+
+class EvStatus(str, Enum):
+    IDLE = "idle"
+    PLUGGED = "plugged"
+    CHARGING = "charging"
+    FULL = "full"
+    FAULT = "fault"
+
+
+class EvType(str, Enum):
+    BEV = "BEV"
+    PHEV = "PHEV"
+    HEV = "HEV"
+
+
+class VirtualEv(BaseModel):
+    id: str
+    name: str
+    vendor: str
+    model: str
+    ev_type: EvType = EvType.BEV
+    battery_capacity_kwh: float = 75.0
+    max_charge_power_kw: float = 11.0
+    max_ac_charge_power_kw: float = 11.0
+    max_dc_charge_power_kw: float = 150.0
+    soc_percent: float = 20.0
+    target_soc_percent: float = 80.0
+    status: EvStatus = EvStatus.IDLE
+    charger_id: Optional[str] = None
+    connector_id: Optional[int] = None
+    session_id: Optional[str] = None
+    energy_charged_kwh: float = 0.0
+    current_power_kw: float = 0.0
+    voltage_v: float = 0.0
+    current_a: float = 0.0
+    created_at: str
+
+
+class CreateEvRequest(BaseModel):
+    id: str
+    name: Optional[str] = None
+    vendor: str = "Generic"
+    model: str = "EV"
+    ev_type: EvType = EvType.BEV
+    battery_capacity_kwh: float = 75.0
+    max_ac_charge_power_kw: float = 11.0
+    max_dc_charge_power_kw: float = 150.0
+    soc_percent: float = 20.0
+    target_soc_percent: float = 80.0
+
+
+class PlugEvRequest(BaseModel):
+    charger_id: str
+    connector_id: int = 1
+
+
+class EvPreset(BaseModel):
+    id: str
+    name: str
+    vendor: str
+    model: str
+    ev_type: EvType
+    battery_capacity_kwh: float
+    max_ac_charge_power_kw: float
+    max_dc_charge_power_kw: float

@@ -21,15 +21,25 @@ class SessionManager:
     charger_id: str,
     connector_id: int = 1,
     transaction_id: Optional[str] = None,
+    ev_id: Optional[str] = None,
   ) -> Session:
     session_id = transaction_id or str(uuid4())
+    initial_soc = 20.0
+    if ev_id:
+      from app.virtual_ev.ev_pool import ev_pool
+
+      ev = ev_pool.get(ev_id)
+      if ev:
+        initial_soc = ev.soc
+
     session = Session(
       id=session_id,
       charger_id=charger_id,
+      ev_id=ev_id,
       connector_id=connector_id,
       start_time=datetime.utcnow().isoformat() + "Z",
       status=SessionStatus.ACTIVE,
-      soc_percent=20.0,
+      soc_percent=initial_soc,
     )
     self._sessions[session_id] = session
     await session_repository.create(session)

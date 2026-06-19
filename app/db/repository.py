@@ -5,13 +5,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.database import async_session_factory
-from app.db.models import ChargerRecord, MeterValueRecord, SessionRecord
+from app.db.models import ChargerRecord, EvRecord, MeterValueRecord, SessionRecord
 from app.models.schemas import (
   ChargerConfig,
   ChargerStatus,
+  EvStatus,
+  EvType,
   MeterValue,
   Session,
   SessionStatus,
+  VirtualEv,
 )
 
 
@@ -19,6 +22,7 @@ def _session_to_schema(record: SessionRecord) -> Session:
   return Session(
     id=record.id,
     charger_id=record.charger_id,
+    ev_id=record.ev_id,
     connector_id=record.connector_id,
     start_time=record.start_time,
     end_time=record.end_time,
@@ -98,6 +102,7 @@ class SessionRepository:
     record = SessionRecord(
       id=session.id,
       charger_id=session.charger_id,
+      ev_id=session.ev_id,
       connector_id=session.connector_id,
       start_time=session.start_time,
       end_time=session.end_time,
@@ -185,3 +190,73 @@ class SessionRepository:
 
 charger_repository = ChargerRepository()
 session_repository = SessionRepository()
+
+
+class EvRepository:
+  async def create(self, ev: VirtualEv) -> EvRecord:
+    record = EvRecord(
+      id=ev.id,
+      name=ev.name,
+      vendor=ev.vendor,
+      model=ev.model,
+      ev_type=ev.ev_type.value if isinstance(ev.ev_type, EvType) else ev.ev_type,
+      battery_capacity_kwh=ev.battery_capacity_kwh,
+      max_charge_power_kw=ev.max_charge_power_kw,
+      max_ac_charge_power_kw=ev.max_ac_charge_power_kw,
+      max_dc_charge_power_kw=ev.max_dc_charge_power_kw,
+      soc_percent=ev.soc_percent,
+      target_soc_percent=ev.target_soc_percent,
+      status=ev.status.value if isinstance(ev.status, EvStatus) else ev.status,
+      charger_id=ev.charger_id,
+      connector_id=ev.connector_id,
+      session_id=ev.session_id,
+      energy_charged_kwh=ev.energy_charged_kwh,
+      current_power_kw=ev.current_power_kw,
+      voltage_v=ev.voltage_v,
+      current_a=ev.current_a,
+      created_at=ev.created_at,
+    )
+    async with async_session_factory() as db:
+      db.add(record)
+      await db.commit()
+      await db.refresh(record)
+      return record
+
+  async def update(self, ev: VirtualEv) -> None:
+    async with async_session_factory() as db:
+      record = await db.get(EvRecord, ev.id)
+      if not record:
+        return
+      record.name = ev.name
+      record.soc_percent = ev.soc_percent
+      record.target_soc_percent = ev.target_soc_percent
+      record.status = ev.status.value if isinstance(ev.status, EvStatus) else ev.status
+      record.charger_id = ev.charger_id
+      record.connector_id = ev.connector_id
+      record.session_id = ev.session_id
+      record.energy_charged_kwh = ev.energy_charged_kwh
+      record.current_power_kw = ev.current_power_kw
+      record.voltage_v = ev.voltage_v
+      record.current_a = ev.current_a
+      await db.commit()
+
+  async def delete(self, ev_id: str) -> bool:
+    async with async_session_factory() as db:
+      record = await db.get(EvRecord, ev_id)
+      if not record:
+        return False
+      await db.delete(record)
+      await db.commit()
+      return True
+
+  async def get(self, ev_id: str) -> EvRecord | None:
+    async with async_session_factory() as db:
+      return await db.get(EvRecord, ev_id)
+
+  async def list_all(self) -> list[EvRecord]:
+    async with async_session_factory() as db:
+      result = await db.execute(select(EvRecord))
+      return list(result.scalars().all())
+
+
+ev_repository = EvRepository()
