@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chargers, commands, sessions, ws
+from app.api import chargers, commands, evs, sessions, ws
 from app.api.ws import setup_broadcast_listeners
 from app.csms.csms_handler import csms_registry
 from app.csms.ws_adapter import FastAPIWebSocketAdapter
@@ -23,9 +23,11 @@ async def lifespan(app: FastAPI):
   from app.db.database import close_db, init_db
   from app.csms.session_manager import session_manager
   from app.virtual_charger.charger_pool import charger_pool
+  from app.virtual_ev.ev_pool import ev_pool
 
   await init_db()
   await charger_pool.load_from_db()
+  await ev_pool.load_from_db()
   await session_manager.load_from_db()
   setup_broadcast_listeners()
   await simulator.start()
@@ -51,6 +53,7 @@ app.add_middleware(
 )
 
 app.include_router(chargers.router)
+app.include_router(evs.router)
 app.include_router(sessions.router)
 app.include_router(commands.router)
 app.include_router(ws.router)
@@ -81,9 +84,11 @@ async def get_ocpp_messages(charger_id: Optional[str] = None, limit: int = 100):
 @app.get("/api/health")
 async def health():
   from app.virtual_charger.charger_pool import charger_pool
+  from app.virtual_ev.ev_pool import ev_pool
 
   return {
     "status": "ok",
     "chargers": len(charger_pool.list_all()),
+    "evs": len(ev_pool.list_all()),
     "connected": len(csms_registry.list_connected()),
   }

@@ -174,10 +174,20 @@ class ConnectedChargePoint(cp):
     if event_type == "Started":
       evse = kwargs.get("evse", {})
       connector_id = evse.get("connector_id", 1) if isinstance(evse, dict) else 1
+
+      from app.virtual_ev.ev_pool import ev_pool
+      from app.virtual_charger.charger_pool import charger_pool
+
+      ev_id = None
+      charger = charger_pool.get(self.charger_id)
+      if charger:
+        ev_id = charger.get_plugged_ev(connector_id)
+
       session = await session_manager.create_session(
         self.charger_id,
         connector_id=connector_id,
         transaction_id=transaction_id,
+        ev_id=ev_id,
       )
       self._notify("session_started", session.model_dump())
 

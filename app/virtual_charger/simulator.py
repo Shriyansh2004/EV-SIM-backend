@@ -31,6 +31,9 @@ class Simulator:
 
   async def _loop(self) -> None:
     while self._running:
+      from app.virtual_ev.ev_pool import ev_pool
+
+      await ev_pool.tick_all()
       await asyncio.sleep(1)
 
 
