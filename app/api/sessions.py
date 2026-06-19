@@ -30,6 +30,14 @@ async def start_session(body: StartSessionRequest) -> dict:
     raise HTTPException(status_code=404, detail="Charger not found")
   if not client._ws:
     raise HTTPException(status_code=400, detail="Charger not connected to CSMS")
+
+  ev_id = client.get_plugged_ev(body.connector_id)
+  if not ev_id:
+    raise HTTPException(
+      status_code=400,
+      detail=f"No EV plugged into connector {body.connector_id}. Plug an EV first.",
+    )
+
   result = await command_service.remote_start(
     body.charger_id,
     body.connector_id,

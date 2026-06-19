@@ -25,12 +25,14 @@ async def broadcast(event_type: str, data: dict[str, Any]) -> None:
 def setup_broadcast_listeners() -> None:
   from app.csms.csms_handler import csms_registry
   from app.virtual_charger.charger_pool import charger_pool
+  from app.virtual_ev.ev_pool import ev_pool
 
   def on_event(event_type: str, data: dict[str, Any]) -> None:
     asyncio.create_task(broadcast(event_type, data))
 
   csms_registry.subscribe(on_event)
   charger_pool.subscribe(on_event)
+  ev_pool.subscribe(on_event)
 
 
 @router.websocket("/ws/updates")

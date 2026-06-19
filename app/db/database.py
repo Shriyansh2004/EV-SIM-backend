@@ -24,11 +24,31 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     yield session
 
 
+async def _run_migrations(conn) -> None:
+  from sqlalchemy import text
+
+  result = await conn.execute(
+    text(
+      "SELECT column_name FROM information_schema.columns "
+      "WHERE table_name = 'sessions' AND column_name = 'ev_id'"
+    )
+  )
+  if result.first() is None:
+    await conn.execute(
+      text(
+        "ALTER TABLE sessions ADD COLUMN ev_id VARCHAR "
+        "REFERENCES evs(id) ON DELETE SET NULL"
+      )
+    )
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sessions_ev_id ON sessions (ev_id)"))
+
+
 async def init_db() -> None:
   import app.db.models  # noqa: F401 — register ORM tables with Base.metadata
 
   async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
+    await _run_migrations(conn)
 
 
 async def close_db() -> None:

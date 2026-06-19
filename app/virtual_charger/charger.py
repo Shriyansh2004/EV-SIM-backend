@@ -37,7 +37,47 @@ class VirtualChargerClient(cp):
     self._soc = 20.0
     self._is_charging = False
     self._connector_statuses = [ChargerStatus.AVAILABLE] * config.connector_count
+    self._plugged_evs: dict[int, Optional[str]] = {i + 1: None for i in range(config.connector_count)}
+    self._active_connector: int = 1
     super().__init__(config.id, None)
+
+  def plug_ev(self, connector_id: int, ev_id: str) -> None:
+    self._plugged_evs[connector_id] = ev_id
+    self._connector_statuses[connector_id - 1] = ChargerStatus.PREPARING
+
+  def unplug_ev(self, connector_id: int) -> None:
+    self._plugged_evs[connector_id] = None
+    if not self._is_charging or self._active_connector != connector_id:
+      self._connector_statuses[connector_id - 1] = ChargerStatus.AVAILABLE
+
+  def get_plugged_ev(self, connector_id: int) -> Optional[str]:
+    return self._plugged_evs.get(connector_id)
+
+  def _get_ev_soc(self, connector_id: int) -> float:
+    ev_id = self._plugged_evs.get(connector_id)
+    if not ev_id:
+      return 20.0
+    from app.virtual_ev.ev_pool import ev_pool
+
+    ev = ev_pool.get(ev_id)
+    return ev.soc if ev else 20.0
+
+  def _get_charge_power(self, connector_id: int) -> float:
+    ev_id = self._plugged_evs.get(connector_id)
+    if not ev_id:
+      return 0.0
+    from app.virtual_ev.ev_pool import ev_pool
+    from app.virtual_ev.ev import compute_charge_power
+
+    ev = ev_pool.get(ev_id)
+    if not ev:
+      return 0.0
+    return compute_charge_power(
+      ev.soc,
+      ev.config.max_charge_power_kw,
+      self.config.max_power_kw,
+      ev.config.target_soc_percent,
+    )
 
   def _notify(self, event_type: str, data: dict[str, Any]) -> None:
     if self.on_update:
@@ -152,8 +192,10 @@ class VirtualChargerClient(cp):
     await self.call(request)
     self._log_in("StatusNotification", {})
 
-  def _build_meter_value(self) -> dict:
-    power_w = self.config.max_power_kw * 1000 if self._is_charging else 0
+  def _build_meter_value(self, connector_id: int = 1) -> dict:
+    power_kw = self._get_charge_power(connector_id) if self._is_charging else 0
+    power_w = power_kw * 1000
+    soc = self._get_ev_soc(connector_id)
     return {
       "timestamp": datetime.utcnow().isoformat() + "Z",
       "sampled_value": [
@@ -168,7 +210,7 @@ class VirtualChargerClient(cp):
           "unit_of_measure": {"unit": "W"},
         },
         {
-          "value": int(self._soc),
+          "value": int(soc),
           "measurand": "SoC",
           "unit_of_measure": {"unit": "Percent"},
         },
@@ -188,11 +230,12 @@ class VirtualChargerClient(cp):
   async def _meter_loop(self) -> None:
     while self._is_charging:
       await asyncio.sleep(5)
-      power_kw = self.config.max_power_kw
+      connector_id = self._active_connector
+      power_kw = self._get_charge_power(connector_id)
       self._energy_wh += power_kw * 1000 * (5 / 3600)
-      self._soc = min(100.0, self._soc + (power_kw / self.config.max_power_kw) * 0.5)
+      self._soc = self._get_ev_soc(connector_id)
 
-      meter_value = [self._build_meter_value()]
+      meter_value = [self._build_meter_value(connector_id)]
       self._seq_no += 1
 
       self._log_out(
@@ -223,21 +266,31 @@ class VirtualChargerClient(cp):
           "status": ChargerStatus.CHARGING.value,
           "current_power_kw": power_kw,
           "energy_kwh": self._energy_wh / 1000,
-          "soc_percent": self._soc,
         },
       )
 
   async def _start_transaction(self, connector_id: int = 1, id_token: str = "DEMO-TOKEN") -> None:
+    ev_id = self._plugged_evs.get(connector_id)
+    if not ev_id:
+      logger.warning("Cannot start transaction on connector %s — no EV plugged in", connector_id)
+      return
+
     self._transaction_id = str(uuid4())
     self._seq_no = 1
     self._energy_wh = 0.0
     self._is_charging = True
+    self._active_connector = connector_id
     self.status = ChargerStatus.CHARGING
     self._connector_statuses[connector_id - 1] = ChargerStatus.CHARGING
+    self._soc = self._get_ev_soc(connector_id)
+
+    from app.virtual_ev.ev_pool import ev_pool
+
+    await ev_pool.start_charging(ev_id, self._transaction_id)
 
     await self._send_status_notification(connector_id, ConnectorStatusEnumType.occupied)
 
-    meter_value = [self._build_meter_value()]
+    meter_value = [self._build_meter_value(connector_id)]
     self._log_out(
       "TransactionEvent",
       {
@@ -267,10 +320,18 @@ class VirtualChargerClient(cp):
   async def _stop_transaction(self) -> None:
     if not self._transaction_id:
       return
+    connector_id = self._active_connector
+    ev_id = self._plugged_evs.get(connector_id)
+
     self._is_charging = False
     if self._meter_task:
       self._meter_task.cancel()
       self._meter_task = None
+
+    if ev_id:
+      from app.virtual_ev.ev_pool import ev_pool
+
+      await ev_pool.stop_charging(ev_id)
 
     self._seq_no += 1
     self._log_out(
@@ -283,7 +344,7 @@ class VirtualChargerClient(cp):
           "transaction_id": self._transaction_id,
           "stopped_reason": "Remote",
         },
-        "meter_value": [self._build_meter_value()],
+        "meter_value": [self._build_meter_value(connector_id)],
       },
     )
     request = call.TransactionEvent(
@@ -295,13 +356,18 @@ class VirtualChargerClient(cp):
         "transaction_id": self._transaction_id,
         "stopped_reason": "Remote",
       },
-      meter_value=[self._build_meter_value()],
+      meter_value=[self._build_meter_value(connector_id)],
     )
     await self.call(request)
     self._log_in("TransactionEvent", {})
 
-    await self._send_status_notification(1, ConnectorStatusEnumType.available)
-    self.status = ChargerStatus.AVAILABLE
+    if ev_id:
+      await self._send_status_notification(connector_id, ConnectorStatusEnumType.occupied)
+      self._connector_statuses[connector_id - 1] = ChargerStatus.PREPARING
+    else:
+      await self._send_status_notification(connector_id, ConnectorStatusEnumType.available)
+      self._connector_statuses[connector_id - 1] = ChargerStatus.AVAILABLE
+    self.status = ChargerStatus.AVAILABLE if not self._is_charging else ChargerStatus.CHARGING
     self._transaction_id = None
 
   @on(Action.request_start_transaction)
@@ -378,14 +444,15 @@ class VirtualChargerClient(cp):
   def to_dict(self) -> dict[str, Any]:
     session = None
     if self._is_charging and self._transaction_id:
+      connector_id = self._active_connector
       session = {
         "id": self._transaction_id,
         "charger_id": self.charger_id,
-        "connector_id": 1,
+        "connector_id": connector_id,
+        "ev_id": self._plugged_evs.get(connector_id),
         "start_time": datetime.utcnow().isoformat() + "Z",
         "energy_kwh": self._energy_wh / 1000,
-        "current_power_kw": self.config.max_power_kw if self._is_charging else 0,
-        "soc_percent": self._soc,
+        "current_power_kw": self._get_charge_power(connector_id),
         "status": "active",
       }
     return {
@@ -396,6 +463,7 @@ class VirtualChargerClient(cp):
       "is_connected": self._ws is not None,
       "current_session": session,
       "connector_statuses": [s.value for s in self._connector_statuses],
+      "plugged_evs": {str(k): v for k, v in self._plugged_evs.items()},
     }
 
   async def inject_fault(self, fault_type: str) -> None:
