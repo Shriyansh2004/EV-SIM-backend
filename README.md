@@ -330,6 +330,8 @@ The backend is **monolithic but multi-role**: the same process hosts the CSMS We
 
 Use the buttons below to jump between workflow steps.
 
+The complete demo flow is: **Startup → Create Charger → Connect → Create EV → Plug EV → Start Charging → Stop → OCPP Explorer → Fault Injection**. Steps 4–7 are the new Virtual EV feature — an EV must be plugged into a connector before a charging session can begin.
+
 <p align="center">
   <a href="#wf-1"><img alt="1 · Startup" src="https://img.shields.io/badge/1·Startup-2563eb?style=for-the-badge" /></a>
   <a href="#wf-2"><img alt="2 · Create Charger" src="https://img.shields.io/badge/2·Create_Charger-2563eb?style=for-the-badge" /></a>
